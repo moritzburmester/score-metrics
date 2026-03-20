@@ -32,20 +32,29 @@ import numpy as np
 from sklearn.datasets import make_moons
 
 class CurvatureNet(nn.Module):
-    def __init__(self, dim, hidden=128):
-        super().__init__()
-
+    # defined as in EBM Paper 
+    def __init__(self, num_channel):
+        super(Curve_Net, self).__init__()
+        self.num_channel = num_channel
         self.net = nn.Sequential(
-            nn.Linear(2*dim + 1, hidden), # start, end, t -> 2d+1
-            nn.Tanh(),
-            nn.Linear(hidden, hidden),
-            nn.Tanh(),
-            nn.Linear(hidden, dim)
+            nn.Linear(64 * 3, self.num_channel),
+            nn.ELU(),
+            nn.Linear(self.num_channel, self.num_channel),
+            nn.ELU(),
+            nn.Linear(self.num_channel, self.num_channel),
+            nn.ELU(),
+            nn.Linear(self.num_channel, self.num_channel),
+            nn.ELU(),
+            nn.Linear(self.num_channel, self.num_channel),
+            nn.ELU(),
+            nn.Linear(self.num_channel, 64)
         )
 
-    def forward(self, x0, x1, t):
-        inp = torch.cat([x0, x1, t], dim=1)
-        return self.net(inp)
+        # self.net.apply(init_weights)
+
+    def forward(self, x0, xT, t):
+        x_cat = torch.cat([x0, xT, t], dim=1)
+        return self.net(x_cat)
 
 class SyntheticPairsDataset(Dataset):
     """
@@ -128,6 +137,89 @@ class SyntheticPairsDataset(Dataset):
 
         return x0_curve, x1_curve, t_curve
     
+
+def train_geodesic_interpolant_batched(
+    x0_batch, x1_batch,         # BxD tensors
+    score_fn,
+    n_points=20,
+    n_steps=2000,
+    lr=1e-3,
+    device='cpu',
+    alpha=1.0,
+    beta=1.0
+):
+    """
+    Train curvature network to interpolate geodesics between batches of points.
+    
+    x0_batch: BxD tensor of starting points
+    x1_batch: BxD tensor of ending points
+    score_fn: function(points, t) -> BxT x D, maps points to score vectors
+    n_points: number of discrete points along curve
+    n_steps: number of optimization steps
+    alpha, beta: metric scaling hyperparameters
+    """
+    
+    B, D = x0_batch.shape
+    dt = 1.0 / (n_points - 1)
+
+    model = CurvatureNet(D).to(device)
+    optimizer = optim.Adam(model.parameters(), lr=lr)
+
+    t_vals = torch.linspace(0,1,n_points,device=device).view(1, n_points, 1)  # 1 x T x 1
+
+    # Repeat t_vals across batch
+    t_batch = t_vals.repeat(B, 1, 1)  # B x T x 1
+
+    # Expand x0 and x1 along the curve
+    x0_exp = x0_batch.unsqueeze(1).repeat(1, n_points, 1)  # B x T x D
+    x1_exp = x1_batch.unsqueeze(1).repeat(1, n_points, 1)  # B x T x D
+
+    for step in range(n_steps):
+        optimizer.zero_grad()
+
+        # Flatten for network: (B*T) x (2D + 1)
+        x0_flat = x0_exp.view(-1, D)
+        x1_flat = x1_exp.view(-1, D)
+        t_flat = t_batch.view(-1, 1)
+
+        c_flat = model(x0_flat, x1_flat, t_flat)
+        c = c_flat.view(B, n_points, D)
+
+        # Interpolated curve
+        curve = (1 - t_batch) * x0_exp + t_batch * x1_exp + 2 * t_batch * (1 - t_batch) * c
+
+        # Compute velocities along time
+        velocities = (curve[:,1:,:] - curve[:,:-1,:]) / dt  # B x (T-1) x D
+        points = curve[:,:-1,:]  # B x (T-1) x D
+
+        # Compute batch metric G from score function
+        ts = t_batch[:,:-1,:]  # B x (T-1) x 1
+        scores = score_fn(points, ts)  # B x (T-1) x D
+        I = torch.eye(D, device=device).unsqueeze(0).unsqueeze(0)  # 1 x 1 x D x D
+        I = I.expand(B, n_points-1, D, D)  # B x (T-1) x D x D
+
+        # replace with modular metric here 
+        G = (alpha * scores.norm(dim=2, keepdim=True).unsqueeze(-1)**4 + beta) * I  # B x (T-1) x D x D
+
+        # Compute kinetic energy: v^T G v
+        v = velocities.unsqueeze(2)  # B x (T-1) x 1 x D
+        energy = torch.matmul(torch.matmul(v, G), v.transpose(2,3))  # B x (T-1) x 1 x 1
+        energy = 0.5 * energy.squeeze(-1).squeeze(-1) * dt  # B x (T-1)
+        loss = energy.sum(dim=1).mean()  # average over batch
+
+        loss.backward()
+        optimizer.step()
+
+        if step % 100 == 0:
+            print(f"step {step} energy {loss.item():.4f}")
+
+    # Return final batched curves
+    with torch.no_grad():
+        c_flat = model(x0_exp.view(-1,D), x1_exp.view(-1,D), t_batch.view(-1,1))
+        c = c_flat.view(B, n_points, D)
+        curve = (1 - t_batch) * x0_exp + t_batch * x1_exp + 2 * t_batch * (1 - t_batch) * c
+
+    return curve  # B x T x D    
 
 print(torch.version.cuda)
 print(torch.cuda.is_available())
