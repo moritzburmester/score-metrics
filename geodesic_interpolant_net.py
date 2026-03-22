@@ -48,19 +48,9 @@ class CurvatureNet(nn.Module):
         return self.net(x_cat)
 
 class SyntheticPairsDataset(Dataset):
-    """
-    Dataset for geodesic interpolation on synthetic manifolds.
-    Supports: circle (1D sphere), two moons, Gaussian mixture.
-    Returns batches of pairs (x0, x1) for training.
-    """
     def __init__(self, manifold_type='circle', n_points=1000, t_steps=50, device='cpu',
                  gaussian_params=None, noise_std=0.0, random_seed=42):
-        """
-        manifold_type: 'circle', 'two_moons', 'gaussians'
-        n_points: number of base points to sample
-        t_steps: number of interpolation steps for curves
-        gaussian_params: dict with keys: means (K,D), stds (K,), weights (K,)
-        """
+
         super().__init__()
         self.manifold_type = manifold_type
         self.n_points = n_points
@@ -90,7 +80,6 @@ class SyntheticPairsDataset(Dataset):
 
         self.points = self.points.to(device)
 
-        # Precompute t_vals for curve expansion
         self.t_vals = torch.linspace(0, 1, t_steps, device=device).view(1, t_steps, 1)
 
     def sample_gaussian_mixture(self, n, means, stds, weights):
@@ -111,7 +100,6 @@ class SyntheticPairsDataset(Dataset):
         return torch.tensor(np.stack(samples), dtype=torch.float32)
 
     def __len__(self):
-        # number of points, we can sample batches without restriction
         return 1000000  # arbitrary large number for infinite sampling
 
     def __getitem__(self, idx):
@@ -146,15 +134,12 @@ def train_geodesic(
 
         B = x0_batch.shape[0]
 
-        # --- time ---
         t_vals = torch.linspace(0, 1, n_points, device=device)
         t_batch = t_vals.view(1, n_points, 1).repeat(B, 1, 1)
 
-        # --- expand ---
         x0_exp = x0_batch.unsqueeze(1).repeat(1, n_points, 1)
         x1_exp = x1_batch.unsqueeze(1).repeat(1, n_points, 1)
 
-        # --- curvature ---
         c_flat = model(
             x0_exp.reshape(-1, D),
             x1_exp.reshape(-1, D),
@@ -162,17 +147,13 @@ def train_geodesic(
         )
         c = c_flat.view(B, n_points, D)
 
-        # --- curve ---
         curve = (1 - t_batch) * x0_exp + t_batch * x1_exp + 2 * t_batch * (1 - t_batch) * c
 
-        # --- velocity ---
         velocities = (curve[:, 1:] - curve[:, :-1]) / dt
         points = curve[:, :-1]  # (B, n_points-1, D)
 
-        # --- metric from manifold ---
         G = manifold.metric(points)  # (B, n_points-1, D, D)
 
-        # --- energy ---
         v = velocities.unsqueeze(2)  # (B,N,1,D)
         energy = torch.matmul(torch.matmul(v, G), v.transpose(2, 3))
         energy = 0.5 * energy.squeeze(-1).squeeze(-1) * dt

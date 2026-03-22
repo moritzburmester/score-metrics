@@ -87,3 +87,45 @@ def create_alternating_line_gaussian_mixture(
     weights = torch.tensor([weight]*K, dtype=torch.float32, device=device)
 
     return means, stds, weights
+
+def fast_gaussian_score(points, t, means, stds, weights):
+    """
+    Numerically stable score of a Gaussian mixture.
+    
+    points: (B,T,D)
+    means: (K,D)
+    stds: (K,)
+    weights: (K,)
+    """
+
+    B, T, D = points.shape
+    K = means.shape[0]
+
+    # Expand
+    x = points.unsqueeze(2)                 # (B,T,1,D)
+    means = means.view(1,1,K,D)             # (1,1,K,D)
+    stds2 = (stds**2).view(1,1,K,1)         # (1,1,K,1)
+
+    # Differences
+    diff = x - means                        # (B,T,K,D)
+
+    # ----- LOG PROBABILITIES (stable) -----
+    exponent = -0.5 * (diff**2).sum(-1) / stds2.squeeze(-1)   # (B,T,K)
+
+    log_weights = torch.log(weights.view(1,1,K))               # (1,1,K)
+    log_normalizer = (D/2) * torch.log(2 * torch.pi * stds2.squeeze(-1))  # (1,1,K)
+
+    log_probs = log_weights + exponent - log_normalizer        # (B,T,K)
+
+    # ----- STABILIZE WITH LOG-SUM-EXP -----
+    max_log_probs, _ = torch.max(log_probs, dim=2, keepdim=True)   # (B,T,1)
+
+    probs = torch.exp(log_probs - max_log_probs)   # safe exponentials
+    probs = probs / probs.sum(dim=2, keepdim=True)  # normalized responsibilities
+
+    # ----- SCORE -----
+    score_components = -diff / stds2              # (B,T,K,D)
+
+    score = (probs.unsqueeze(-1) * score_components).sum(dim=2)  # (B,T,D)
+
+    return score

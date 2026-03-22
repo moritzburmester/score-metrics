@@ -20,6 +20,10 @@ env/
 plots/
 logs/
 *.log
+saved_models_circle/
+saved_models_gaussian/
+saved_models_uniform/
+saved_models_weighted/
 
 # =========================
 # PyTorch / ML artifacts
