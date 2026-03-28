@@ -14,27 +14,17 @@ def plot_score_vector_field_gaussian(
     device='cuda',
     path=None
 ):
-    """
-    Plot the score vector field of a Gaussian mixture.
-    
-    means: (K,2) tensor of Gaussian means
-    stds: (K,) tensor of standard deviations
-    weights: (K,) tensor of mixture weights (should sum to 1)
-    """
-    # Make grid
     x = np.linspace(xlim[0], xlim[1], n_grid)
     y = np.linspace(ylim[0], ylim[1], n_grid)
     X, Y = np.meshgrid(x, y)
     XYpairs = np.stack([X.flatten(), Y.flatten()], axis=1)
     xs = torch.tensor(XYpairs, dtype=torch.float32, device=device, requires_grad=True)  # (n_grid*n_grid, 2)
 
-    # Ensure weights sum to 1
     weights = weights / weights.sum()
 
     K = means.shape[0]
     D = means.shape[1]
 
-    # Vectorized score computation
     xs_exp = xs.unsqueeze(1)                   # (N,1,D)
     means_exp = means.view(1,K,D)             # (1,K,D)
     stds2 = (stds**2).view(1,K,1)            # (1,K,1)
@@ -51,7 +41,6 @@ def plot_score_vector_field_gaussian(
 
     scores = weighted_scores.detach().cpu().numpy().reshape(n_grid, n_grid, 2)
 
-    # Plot
     fig, ax = plt.subplots(figsize=(8,8))
     q = ax.quiver(X, Y, scores[:,:,0], scores[:,:,1], color='blue', alpha=0.7)
     ax.scatter(means[:,0].cpu(), means[:,1].cpu(), c='red', s=100, label='Means')
@@ -65,7 +54,6 @@ def plot_score_vector_field_gaussian(
     plt.tight_layout()
     
     if path is not None:
-        # Ensure the directory exists
         os.makedirs(os.path.dirname(path), exist_ok=True)
         plt.savefig(path, dpi=200, bbox_inches='tight', pad_inches=0.1)
     plt.show()#
@@ -83,11 +71,7 @@ def plot_true_mixture_score_magnitude(
     device='cuda',
     path=None
     ):
-    """
-    Plot log-magnitude of score using a provided score function (stable).
-    """
 
-    # ---- Grid ----
     x = np.linspace(xlim[0], xlim[1], n_grid)
     y = np.linspace(ylim[0], ylim[1], n_grid)
     X, Y = np.meshgrid(x, y)
@@ -95,7 +79,6 @@ def plot_true_mixture_score_magnitude(
     XYpairs = np.stack([X.flatten(), Y.flatten()], axis=1)
     xs = torch.tensor(XYpairs, dtype=torch.float32, device=device)
 
-    # ---- Use your STABLE score function ----
     with torch.no_grad():
         # reshape to (B=1, T=N, D=2)
         scores = score_fn(xs.view(1, -1, 2), None)
@@ -136,7 +119,6 @@ def plot_geodesic_on_score_analytic(curve, score_fn,
     if not isinstance(curve, torch.Tensor):
         curve = torch.tensor(curve, dtype=torch.float, device=device)
 
-    # Determine plotting bounds
     if means is not None and stds is not None:
         means_np = means.cpu().numpy() if torch.is_tensor(means) else np.array(means)
         stds_np = stds.cpu().numpy() if torch.is_tensor(stds) else np.array(stds)
@@ -153,14 +135,12 @@ def plot_geodesic_on_score_analytic(curve, score_fn,
     x_min, x_max = x_min - eps_x, x_max + eps_x
     y_min, y_max = y_min - eps_y, y_max + eps_y
 
-    # Generate grid
     x_vals = np.linspace(x_min, x_max, n_grid)
     y_vals = np.linspace(y_min, y_max, n_grid)
     X, Y = np.meshgrid(x_vals, y_vals)
     XYpairs = np.stack([X.ravel(), Y.ravel()], axis=1)
     xs = torch.tensor(XYpairs, dtype=torch.float, device=device)
 
-    # Compute score magnitudes
     with torch.no_grad():
         if means is not None and stds is not None and weights is not None:
             scores = score_fn(xs.view(1, -1, 2), None)
@@ -171,7 +151,6 @@ def plot_geodesic_on_score_analytic(curve, score_fn,
         score_magnitude = torch.norm(scores, dim=1).cpu().numpy().reshape(n_grid, n_grid)
         log_magnitude = np.log(score_magnitude + 1e-8)
 
-    # Plot
     plt.figure(figsize=(8,8))
     plt.contourf(X, Y, log_magnitude, cmap='viridis', alpha=0.8, levels=100)
     plt.colorbar(label='log(||score|| + ε)')
@@ -227,10 +206,8 @@ def plot_geodesics_on_density(
     n_grid=300,
     device='cuda'
 ):
-    import matplotlib.pyplot as plt
-    import os
 
-    # ---- bounds ----
+ 
     means_np = means.cpu().numpy()
     stds_np = stds.cpu().numpy()
 
@@ -239,7 +216,7 @@ def plot_geodesics_on_density(
     y_min = (means_np[:,1] - 3*stds_np).min()
     y_max = (means_np[:,1] + 3*stds_np).max()
 
-    # ---- grid ----
+
     x_vals = np.linspace(x_min, x_max, n_grid)
     y_vals = np.linspace(y_min, y_max, n_grid)
     X, Y = np.meshgrid(x_vals, y_vals)
@@ -252,15 +229,14 @@ def plot_geodesics_on_density(
         density = density.cpu().numpy().reshape(n_grid, n_grid)
         log_density = np.log(density + 1e-8)
 
-    # ---- plot ----
+
     plt.figure(figsize=(9,9))
     plt.contourf(X, Y, log_density, cmap='viridis', levels=80, alpha=0.85)
 
-    # smaller colorbar (optional)
+
     cbar = plt.colorbar(fraction=0.046, pad=0.04)
     cbar.set_label("log density")
 
-    # ---- styles ----
     colors = {
         "rbf": "red",
         "land": "blue",
@@ -277,7 +253,7 @@ def plot_geodesics_on_density(
         "mixed": "d"
     }
 
-    # ---- plot curves ----
+
     for name, curve in curves_dict.items():
         curve_np = curve.squeeze(0).detach().cpu().numpy()
 
@@ -385,8 +361,7 @@ def plot_geodesic_on_density(curve,
 
 def plot_geodesics_on_gmm_density(curves, mixture, X, Y, title="Geodesics", save_path=None, device='cpu'):
     plt.figure(figsize=(8, 6))
-    
-    # ---- density ----
+
     pos = torch.stack([X.reshape(-1), Y.reshape(-1)], dim=1).to(device)
     density = mixture.prob(pos).view(X.shape).detach().cpu()
     
@@ -399,18 +374,16 @@ def plot_geodesics_on_gmm_density(curves, mixture, X, Y, title="Geodesics", save
         alpha=0.7
     )
     
-    # ---- styles ----
     colors = ['red', 'green', 'orange', 'purple', 'black', 'cyan']
     markers = ['o', 's', '^', 'D', '*', 'x']
     
-    # ---- plot curves ----
+
     for i, (name, curve) in enumerate(curves.items()):
-        curve = curve.squeeze(0).detach().cpu()  # detach ensures no grad
+        curve = curve.squeeze(0).detach().cpu() 
         plt.plot(curve[:, 0], curve[:, 1], label=name, color=colors[i % len(colors)], linewidth=2)
         plt.scatter(curve[:, 0], curve[:, 1], color=colors[i % len(colors)],
                     marker=markers[i % len(markers)], s=20)
     
-    # ---- start/end ----
     first_curve = list(curves.values())[0].squeeze(0).detach().cpu()
     plt.scatter(first_curve[0,0], first_curve[0,1], c='black', s=80)
     plt.scatter(first_curve[-1,0], first_curve[-1,1], c='black', s=80)
@@ -432,12 +405,7 @@ def plot_geodesics_on_score(curves, score_fn,
                             n_grid=400, t=0.01,
                             xlim=(-2, 2), ylim=(-2, 2),
                             device='cpu'):
-    import os
-    import torch
-    import numpy as np
-    import matplotlib.pyplot as plt
 
-    # ---- prepare grid ----
     x_vals = np.linspace(xlim[0], xlim[1], n_grid)
     y_vals = np.linspace(ylim[0], ylim[1], n_grid)
     X, Y = np.meshgrid(x_vals, y_vals)
@@ -450,7 +418,6 @@ def plot_geodesics_on_score(curves, score_fn,
         score_magnitude = torch.norm(scores, dim=1).cpu().numpy().reshape(n_grid, n_grid)
         log_magnitude = np.log(score_magnitude + 1e-8)
 
-    # ---- plot ----
     plt.figure(figsize=(8, 8))
     plt.contourf(X, Y, log_magnitude, levels=100, cmap='viridis', alpha=0.8)
     plt.colorbar(label='log(||score|| + ε)')
@@ -465,7 +432,6 @@ def plot_geodesics_on_score(curves, score_fn,
         plt.scatter(curve_np[0,0], curve_np[0,1], color='green', s=60, zorder=5)  # start
         plt.scatter(curve_np[-1,0], curve_np[-1,1], color='blue', s=60, zorder=5)  # end
 
-    # ---- layout ----
     plt.xlabel("x")
     plt.ylabel("y")
     plt.title(title)
@@ -475,7 +441,6 @@ def plot_geodesics_on_score(curves, score_fn,
     plt.ylim(ylim)
     plt.gca().set_aspect('equal', adjustable='box')
 
-    # ---- save ----
     if save_path:
         os.makedirs(os.path.dirname(save_path), exist_ok=True)
         plt.savefig(save_path, dpi=200, bbox_inches='tight', pad_inches=0)
