@@ -48,11 +48,11 @@ sde = 'VESDE' #@param ['VESDE', 'VPSDE', 'subVPSDE'] {"type": "string"}
 
 ckpt_path = "logs/pretrained/checkpoint_48.pth"
 config = configs.get_config()  
-sde = VESDE(sigma_min=config.model.sigma_min, sigma_max=config.model.sigma_max, N=10)
+sde = VESDE(sigma_min=config.model.sigma_min, sigma_max=config.model.sigma_max, N=config.model.num_scales)
 sde.discrete_sigmas = sde.discrete_sigmas.to(config.device)
 sampling_eps = 1e-5
 
-batch_size =  1 #@param {"type":"integer"}
+batch_size =   4 #@param {"type":"integer"}
 config.training.batch_size = batch_size
 config.eval.batch_size = batch_size
 
@@ -72,12 +72,38 @@ state = dict(step=0, optimizer=optimizer,
 state = restore_checkpoint(ckpt_path, state, config.device)
 ema.copy_to(score_model.parameters())
 
-score_fn = mutils.get_score_fn(
-    sde,
-    score_model,
-    train=False,
-    continuous=config.training.continuous
-)
+
+def image_grid(x):
+  size = config.data.image_size
+  channels = config.data.num_channels
+  img = x.reshape(-1, size, size, channels)
+  w = int(np.sqrt(img.shape[0]))
+  img = img.reshape((w, w, size, size, channels)).transpose((0, 2, 1, 3, 4)).reshape((w * size, w * size, channels))
+  return img
+
+def show_samples(x):
+  x = x.permute(0, 2, 3, 1).detach().cpu().numpy()
+  img = image_grid(x)
+  plt.figure(figsize=(8,8))
+  plt.axis('off')
+  plt.imshow(img)
+  plt.show()
+
+def save_samples(x, save_dir="samples", filename="sample.png"):
+    os.makedirs(save_dir, exist_ok=True)
+    
+    x = x.permute(0, 2, 3, 1).detach().cpu().numpy()
+    img = image_grid(x)
+    
+    save_path = os.path.join(save_dir, filename)
+    
+    plt.figure(figsize=(8, 8))
+    plt.axis('off')
+    plt.imshow(img)
+    plt.savefig(save_path, bbox_inches='tight', pad_inches=0)
+    plt.close()
+    
+    print(f"Saved samples to {save_path}")
 
 #@title PC sampling
 img_size = config.data.image_size
@@ -95,14 +121,5 @@ sampling_fn = sampling.get_pc_sampler(sde, shape, predictor, corrector,
                                       eps=sampling_eps, device=config.device)
 
 x, n = sampling_fn(score_model)
-# create a sample (or use your generated x)
-x_sample = x[0:1]  # take 1 image (shape: [1, C, H, W])
 
-# choose time t
-t = torch.tensor([0.5], device=config.device)  # between 0 and T
-
-# compute score
-score = score_fn(x_sample, t)
-
-print(score.shape)  # should be same as x
-print(score)
+save_samples(x, save_dir="samples", filename="sample_0.png")
